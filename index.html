@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>Lecteur NFC SERINETTE</title>
+<style>
+  *{box-sizing:border-box}
+  body{
+    margin:0;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    background:#111;
+    color:#eee;
+  }
+  main{
+    max-width:760px;
+    margin:auto;
+    padding:18px;
+  }
+  h1{font-size:1.55rem;margin:.2rem 0 .3rem}
+  .sub{opacity:.78;margin-bottom:16px}
+  .card{
+    background:#1d1d1d;
+    border:1px solid #3b3b3b;
+    border-radius:14px;
+    padding:16px;
+    margin:12px 0;
+  }
+  button,input{
+    width:100%;
+    font:inherit;
+    border-radius:10px;
+    border:1px solid #555;
+    padding:13px 14px;
+    min-height:48px;
+  }
+  button{
+    cursor:pointer;
+    font-weight:700;
+    margin-top:10px;
+  }
+  input{
+    background:#0f0f0f;
+    color:#fff;
+    margin-top:8px;
+  }
+  label{display:block;font-weight:700;margin-top:13px}
+  .uid{
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+    font-size:1.45rem;
+    word-break:break-all;
+    padding:12px;
+    background:#090909;
+    border-radius:10px;
+    margin-top:8px;
+    min-height:52px;
+  }
+  .status{
+    margin-top:12px;
+    padding:11px;
+    border-radius:9px;
+    background:#2b2b2b;
+    line-height:1.35;
+  }
+  .ok{background:#16341f}
+  .err{background:#411919}
+  .row{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:10px;
+  }
+  @media(max-width:520px){.row{grid-template-columns:1fr}}
+  table{
+    width:100%;
+    border-collapse:collapse;
+    margin-top:10px;
+    font-size:.93rem;
+  }
+  th,td{
+    border-bottom:1px solid #444;
+    padding:9px 5px;
+    text-align:left;
+    vertical-align:top;
+  }
+  td:first-child{
+    font-family:ui-monospace,SFMono-Regular,Consolas,monospace;
+  }
+  .small{font-size:.86rem;opacity:.76}
+  .danger{background:#431818}
+  .secondary{background:#2a2a2a}
+</style>
+</head>
+
+<body>
+<main>
+  <h1>Lecteur NFC — SERINETTE</h1>
+  <div class="sub">Lecture de l'UID avec le smartphone puis création du fichier d'indexation.</div>
+
+  <section class="card">
+    <button id="scan">📡 DÉMARRER LA LECTURE NFC</button>
+    <div id="status" class="status">Appuyez sur le bouton, puis autorisez le NFC si Android le demande.</div>
+
+    <label>UID détecté</label>
+    <div id="uid" class="uid">—</div>
+
+    <label for="titre">Titre associé</label>
+    <input id="titre" type="text" autocomplete="off" placeholder="Ex. La vie en rose">
+
+    <div class="row">
+      <button id="ajouter">➕ Ajouter à la liste</button>
+      <button id="copier" class="secondary">📋 Copier l'UID</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <strong>Index RFID</strong>
+    <div class="small" style="margin-top:6px">Format exporté : UID;TITRE</div>
+
+    <table>
+      <thead><tr><th>UID</th><th>Titre</th></tr></thead>
+      <tbody id="liste"></tbody>
+    </table>
+
+    <div class="row">
+      <button id="exporter">💾 Exporter RFID_INDEX.txt</button>
+      <button id="vider" class="danger">🗑 Vider la liste</button>
+    </div>
+  </section>
+
+  <section class="card small">
+    Cette page doit être ouverte depuis son adresse HTTPS GitHub Pages.
+    Ne pas ouvrir le fichier HTML directement depuis le dossier Téléchargements du téléphone.
+  </section>
+</main>
+
+<script>
+let uidActuel = "";
+let lecteurNFC = null;
+let lignes = JSON.parse(localStorage.getItem("serinette_rfid_index") || "[]");
+
+const elUid = document.getElementById("uid");
+const status = document.getElementById("status");
+const titre = document.getElementById("titre");
+const liste = document.getElementById("liste");
+
+function message(txt, type="") {
+  status.textContent = txt;
+  status.className = "status" + (type ? " " + type : "");
+}
+
+function normaliserUID(s) {
+  return (s || "").toUpperCase().replace(/[^0-9A-F]/g, "");
+}
+
+function sauver() {
+  localStorage.setItem("serinette_rfid_index", JSON.stringify(lignes));
+  afficherListe();
+}
+
+function afficherListe() {
+  liste.innerHTML = "";
+
+  if (!lignes.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 2;
+    td.textContent = "Aucune carte enregistrée.";
+    td.style.opacity = ".65";
+    tr.appendChild(td);
+    liste.appendChild(tr);
+    return;
+  }
+
+  lignes.forEach((x, i) => {
+    const tr = document.createElement("tr");
+
+    const tdUid = document.createElement("td");
+    tdUid.textContent = x.uid;
+
+    const tdTitre = document.createElement("td");
+    const txt = document.createElement("span");
+    txt.textContent = x.titre + " ";
+
+    const sup = document.createElement("button");
+    sup.textContent = "×";
+    sup.title = "Supprimer";
+    sup.style.width = "auto";
+    sup.style.padding = "2px 9px";
+    sup.style.minHeight = "auto";
+    sup.style.margin = "0 0 0 6px";
+    sup.onclick = () => {
+      lignes.splice(i, 1);
+      sauver();
+    };
+
+    tdTitre.appendChild(txt);
+    tdTitre.appendChild(sup);
+    tr.appendChild(tdUid);
+    tr.appendChild(tdTitre);
+    liste.appendChild(tr);
+  });
+}
+
+document.getElementById("scan").addEventListener("click", async () => {
+  if (!window.isSecureContext) {
+    message("Cette page n'est pas ouverte en HTTPS. Ouvrez l'adresse GitHub Pages, pas le fichier téléchargé.", "err");
+    return;
+  }
+
+  if (!("NDEFReader" in window)) {
+    message("Web NFC n'est pas disponible ici. Utilisez Chrome sur un smartphone Android compatible NFC.", "err");
+    return;
+  }
+
+  try {
+    lecteurNFC = new NDEFReader();
+    await lecteurNFC.scan();
+
+    message("Lecture NFC active. Approchez maintenant une carte du dos du téléphone.", "ok");
+
+    lecteurNFC.onreadingerror = () => {
+      message("Carte détectée, mais lecture impossible par Web NFC.", "err");
+    };
+
+    lecteurNFC.onreading = event => {
+      const brut = event.serialNumber || "";
+      uidActuel = normaliserUID(brut);
+
+      if (uidActuel) {
+        elUid.textContent = uidActuel;
+        message("Carte détectée. Entrez le titre puis appuyez sur Ajouter.", "ok");
+        if (navigator.vibrate) navigator.vibrate(80);
+      } else {
+        elUid.textContent = "(UID non fourni)";
+        message("Carte lue, mais Chrome n'a pas fourni de numéro de série.", "err");
+      }
+    };
+  } catch (err) {
+    let txt = "Impossible de démarrer le NFC : " + err.name;
+
+    if (err.name === "NotAllowedError") {
+      txt += ". Vérifiez que le NFC est activé et acceptez l'autorisation demandée par Chrome.";
+    }
+    message(txt, "err");
+  }
+});
+
+document.getElementById("ajouter").addEventListener("click", () => {
+  const nom = titre.value.trim();
+
+  if (!uidActuel) {
+    message("Scannez d'abord une carte.", "err");
+    return;
+  }
+
+  if (!nom) {
+    message("Saisissez le titre associé à cette carte.", "err");
+    titre.focus();
+    return;
+  }
+
+  const existant = lignes.findIndex(x => x.uid === uidActuel);
+
+  if (existant >= 0) {
+    lignes[existant].titre = nom;
+    message("UID déjà présent : titre mis à jour.", "ok");
+  } else {
+    lignes.push({uid: uidActuel, titre: nom});
+    message("Association ajoutée.", "ok");
+  }
+
+  sauver();
+  titre.value = "";
+});
+
+document.getElementById("copier").addEventListener("click", async () => {
+  if (!uidActuel) {
+    message("Aucun UID à copier.", "err");
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(uidActuel);
+    message("UID copié.", "ok");
+  } catch {
+    message("Copie automatique impossible. Sélectionnez l'UID manuellement.", "err");
+  }
+});
+
+document.getElementById("exporter").addEventListener("click", () => {
+  if (!lignes.length) {
+    message("La liste est vide.", "err");
+    return;
+  }
+
+  const contenu = lignes.map(x => `${x.uid};${x.titre}`).join("\r\n") + "\r\n";
+  const blob = new Blob([contenu], {type:"text/plain;charset=utf-8"});
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "RFID_INDEX.txt";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  message("Fichier RFID_INDEX.txt créé.", "ok");
+});
+
+document.getElementById("vider").addEventListener("click", () => {
+  if (confirm("Vider toute la liste ?")) {
+    lignes = [];
+    sauver();
+    message("Liste vidée.");
+  }
+});
+
+afficherListe();
+</script>
+</body>
+</html>
